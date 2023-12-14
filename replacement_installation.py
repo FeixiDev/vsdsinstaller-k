@@ -2,6 +2,8 @@
 import os
 import re
 import sys
+import tarfile
+import time
 from prettytable import PrettyTable
 from base import Base
 
@@ -27,6 +29,28 @@ class ReplacementInstallation:
             print(e)  
             sys.exit()
 
+    # 获取解压后的文件夹名字
+    def get_extracted_folder(self, kernel_package_name):
+        
+        folder_name = None
+        with tarfile.open(kernel_package_name, 'r') as tar:
+            folder_name = os.path.commonprefix(tar.getnames())
+        return folder_name
+    
+    # 检查 copymods
+    def check_copymods(self):
+        try:
+            command = "mount | grep copymods"
+            result = self.base.com(command)
+
+            if result.stdout:
+                print("系统存在 copymods RAMFS 挂载，请检查系统内核模块")
+                sys.exit()
+            else:
+                print("系统中未发现 copymods RAMFS 挂载，可以继续进行后续步骤")
+        except Exception as e:
+            print(f"发生错误：{e}")
+
     def change_kernel(self):
         if not self.config:
             self.config = self.install_from_yaml()
@@ -48,6 +72,10 @@ class ReplacementInstallation:
         # 检查当前内核版本是否符合预期版本
         if current_kernel_version not in expected_kernel_version: # 不符合 继续后续步骤
             print(f"当前内核版本为：{current_kernel_version}，不符合预期版本，准备更新内核")
+            
+            print("执行检查 copymods 方法")
+            self.check_copymods()
+
             kernel_package_name = self.config.get('kernel-package').strip()
             tar_path = os.path.join(current_dir, kernel_package_name)
             # 检查内核安装包是否存在于当前路径
@@ -57,8 +85,9 @@ class ReplacementInstallation:
             except FileNotFoundError as e:
                 print(e)
                 sys.exit() 
+
             # 解压内核安装包
-            command = f"tar -xzvf {kernel_package_name}"
+            command = f"sudo tar -xzvf {kernel_package_name}"
             print("解压内核安装包中")
             result = self.base.com(command)
             self.logger.log(f"执行指令：{command}. \n执行结果：{result.stdout}")
@@ -67,20 +96,32 @@ class ReplacementInstallation:
                 print("解压失败，中止程序。")
                 sys.exit()
             else:
-                tar_path = os.path.join(current_dir, "krl")    ###########
+                extracted_folder = self.get_extracted_folder(tar_path)
+                tar_path = os.path.join(current_dir, extracted_folder)  ###########
                 # print(f"{tar_path}")
-                # 拷贝内核文件及内核模块
-                command_a = f"cp {tar_path}/boot/* /boot/"
-                result = self.base.com(command_a)
-                self.logger.log(f"执行指令：{command_a}. \n执行结果：{result.stdout}")
-                command_b = f"cp -r {tar_path}/lib/modules/5.4.0-131-generic /lib/modules/"
-                result = self.base.com(command_b)
-                self.logger.log(f"执行指令：{command_b}. \n执行结果：{result.stdout}")
                 
+                # 拷贝内核文件及内核模块
+                command_a = f"sudo cp {tar_path}/boot/* /boot/"
+                result = self.base.com(command_a)
+                self.logger.log(f"执行指令：{command_a}. \n执行结果：{result.stdout}\n返回码：{result.returncode}")
+                if result.returncode != 0:
+                    print("替换内核失败，程序终止")
+                    sys.exit()
+                command_b = f"sudo cp -r {tar_path}/lib/modules/5.4.0-131-generic /lib/modules/"
+                result = self.base.com(command_b)
+                self.logger.log(f"执行指令：{command_b}. \n执行结果：{result.stdout}\n返回码：{result.returncode}")
+                if result.returncode != 0:
+                    print("替换内核失败，程序终止")
+                    sys.exit()
+
+                time.sleep(5)
+
                 # 生成 initramfs 映像
-                command_create = f"update-initramfs -c -k {expected_kernel_version}"
+                print(f"更新 initramfs 中")
+                command_create = f"sudo update-initramfs -c -k {expected_kernel_version}"
                 result = self.base.com(command_create)
                 self.logger.log(f"执行指令：{command_create}. \n执行结果：{result.stdout}")
+                print(f"执行生成 initramfs 映像. \n执行结果：{result.stdout}")
                 if result.returncode == 0:
                     command_ls = f"ls /boot | grep initrd.img-{expected_kernel_version}"
                     result = self.base.com(command_ls)
@@ -112,6 +153,8 @@ class ReplacementInstallation:
                     sys.exit()
                 else:
                     print("更新 grub 成功")
+
+            print(f"内核版本更新完成")
         else:
             print(f"当前内核版本为：{current_kernel_version}，已是预期内核版本")
 
@@ -145,10 +188,11 @@ class ReplacementInstallation:
             print(e)
             sys.exit()
 
-        self.base.com("apt update")
+        print("执行 apt update, 请耐心等待")
+        self.base.com("sudo apt update")
 
         # 安装依赖包和 Java
-        command = "apt install -y flex xmlto po4a xsltproc asciidoctor python3-setuptools help2man unzip default-jre openjdk-11-jre-headless"
+        command = "sudo apt install -y flex xmlto po4a xsltproc asciidoctor python3-setuptools help2man unzip default-jre openjdk-11-jre-headless"
         print("开始安装依赖包和 Java，网络原因可能会花费较多时间")
         result = self.base.com(command)
         self.logger.log(f"执行指令：{command}. \n执行结果：{result.stdout}")
@@ -161,7 +205,7 @@ class ReplacementInstallation:
             sys.exit()
 
         # 安装 VersaSDS (DRBD/LINSTOR)
-        command = f"dpkg -i {VersaSDS_DEB}"
+        command = f"sudo dpkg -i {VersaSDS_DEB}"
         print("开始安装VersaSDS")
         result = self.base.com(command)
         self.logger.log(f"执行指令：{command}. \n执行结果：{result.stdout}")
