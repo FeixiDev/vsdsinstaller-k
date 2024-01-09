@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 import argparse
-from log_record import Logger
+from base import Logger
 from replacement_installation import ReplacementInstallation
 
 # 更换内核
@@ -25,7 +25,7 @@ def display_drbd_linstor_version(re_in):
     re_in.get_versions()
 
 def display_version():
-    print("version: v1.0.0")
+    print("version: v1.0.1")
 
 def main():
     parser = argparse.ArgumentParser(description='vsdsinstaller-k')
